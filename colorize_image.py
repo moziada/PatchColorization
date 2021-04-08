@@ -6,7 +6,7 @@ from util import *
 
 input_dir = 'examples'
 output_folder = 'output'
-imgName = 'test.jpg'
+imgName = '1533130050-cairo_main.jpg'
 save_path = os.path.join(output_folder, imgName.split('.')[0])
 
 pil_img = read_to_pil(os.path.join(input_dir, imgName))
