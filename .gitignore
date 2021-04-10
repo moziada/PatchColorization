@@ -11,4 +11,5 @@ __pycache__
 !/output/1533130050-cairo_main.jpg
 
 #models dir
-/models
+/models/*.pth
+/models/*.pkl
