@@ -1,2 +1,14 @@
+#pycharm settings
 __pycache__
 .idea
+
+#examples dir
+/examples
+!/examples/1533130050-cairo_main.jpg
+
+#output dir
+/output
+!/output/1533130050-cairo_main.jpg
+
+#models dir
+/models
