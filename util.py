@@ -12,6 +12,10 @@ import pickle
 import os
 
 
+def tens2np(tens):
+    return tens.detach().numpy()[0, ...].transpose((1, 2, 0))
+
+
 def read_to_pil(img_path):
     out_img = Image.open(img_path)
     if len(np.asarray(out_img).shape) == 2:
@@ -20,41 +24,53 @@ def read_to_pil(img_path):
     return out_img
 
 
-def pil_to_gray_np(img):
+def pil_to_gray_np(img, Channels=3):
     grey_img = color.rgb2lab(np.asarray(img))[:, :, 0]
-    # grey_img = color.rgb2gray(np.asarray(img))
-    return np.stack([grey_img, grey_img, grey_img], axis=2)
+    if Channels == 1:
+        return grey_img
+    elif Channels == 3:
+        return np.stack([grey_img, grey_img, grey_img], axis=2)
 
 
 def resize_img(img, HW=(256, 256), resample=3):
+    # resample=3 => BILINEAR
     return img.resize((HW[1], HW[0]), resample=resample)
 
 
-def tens2np(tens):
-    return tens.detach().numpy()[0, ...].transpose((1, 2, 0))
-
-
 def preprocess_img(pil_img, HW=(256, 256), resample=3):
-    # return original size L and resized L as torch Tensors
-    np_img_rgb = np.asarray(pil_img)
-    np_img_rgb_rs = resize_img(pil_img, HW=HW, resample=resample)
+    pil_img_rs = resize_img(pil_img, HW=HW, resample=resample)
 
-    img_lab_orig = color.rgb2lab(np_img_rgb)
-    img_lab_rs = color.rgb2lab(np_img_rgb_rs)
-
-    img_l_orig = img_lab_orig[:, :, 0]
-    img_l_rs = img_lab_rs[:, :, 0]
+    img_l_orig = pil_to_gray_np(pil_img, Channels=1)
+    img_l_rs = pil_to_gray_np(pil_img_rs, Channels=1)
 
     tens_l_img = torch.Tensor(img_l_orig)[None, None, :, :]
     tens_l_img_rs = torch.Tensor(img_l_rs)[None, None, :, :]
 
-    return (tens_l_img, tens_l_img_rs)
+    return tens_l_img, tens_l_img_rs
 
 
-def postprocess(np_l_img, np_ab_img):
+def parabola_fn(x):
+    stiff_fn = lambda a: -4 * a ** 2 + 4 * a  # more desaturation
+    smoother_fn = lambda b: -2.5 * b ** 2 + 2.5 * b + 0.375  # less desaturation
+    return smoother_fn(x)
+
+
+def desaturate(pil_img, out_img):
+    np_grey_img = color.rgb2gray(np.asarray(pil_img))
+    pixels_weights = np_grey_img[:, :]
+    mapped_weights = parabola_fn(pixels_weights)
+    hsv_img = color.rgb2hsv(out_img)
+    hsv_img[:, :, 1] = np.multiply(hsv_img[:, :, 1], mapped_weights)  # de-saturated
+    return color.hsv2rgb(hsv_img)
+
+
+def postprocess(np_l_img, np_ab_img, pil_img, Desaturate=True):
     np_lab_img = np.concatenate([np_l_img, np_ab_img], axis=2)
     np_rgb_img = color.lab2rgb(np_lab_img)
-    return np_rgb_img
+    if Desaturate:
+        return desaturate(pil_img, np_rgb_img)
+    else:
+        return np_rgb_img
 
 
 def scaleback_ab_tens(tens_orig_l, out_ab, mode='bilinear'):
@@ -62,29 +78,11 @@ def scaleback_ab_tens(tens_orig_l, out_ab, mode='bilinear'):
     HW = out_ab.shape[2:]
 
     # call resize function if needed
-    if (HW_orig[0] != HW[0] or HW_orig[1] != HW[1]):
+    if HW_orig[0] != HW[0] or HW_orig[1] != HW[1]:
         out_ab_orig = F.interpolate(out_ab, size=HW_orig, mode='bilinear')
     else:
         out_ab_orig = out_ab
     return out_ab_orig
-
-
-def desaturate(pil_img, finalimg):
-    np_grey_img = color.rgb2gray(np.asarray(pil_img))
-    # max_value=np.max(np_grey_img[:,:,0])
-    # pixels_weights=np.divide(np_grey_img[:, :, 0], 255)
-    pixels_weights = np_grey_img[:, :]
-    mapped_weights = parabola_fn(pixels_weights)
-    hsv_img = color.rgb2hsv(finalimg)
-    hsv_img[:, :, 1] = np.multiply(hsv_img[:, :, 1], mapped_weights)  # de-saturated
-    # desaturated_hsv_img = np.stack([hsv_img[:,:,0], np.multiply(hsv_img[:,:,1], mapped_weights), hsv_img[:,:,2]], axis=2)
-    return color.hsv2rgb(hsv_img)
-
-
-def parabola_fn(x):
-    stiff_fn = lambda a: -4 * a ** 2 + 4 * a  # more desaturation
-    smoother_fn = lambda b: -2.5 * b ** 2 + 2.5 * b + 0.375  # less desaturation
-    return smoother_fn(x)
 
 
 def detector(img, save_path):
@@ -97,8 +95,6 @@ def detector(img, save_path):
         pred = DefaultPredictor(cfg)
         outputs = pred(img)
         pickle.dump(outputs, open(save_path, 'wb'))
-        # pred_bbox = outputs["instances"].pred_boxes.to(torch.device('cpu')).tensor.numpy()
-        # np.savez(save_path, bbox=pred_bbox)
     else:
         outputs = pickle.load(open(save_path, 'rb'))
 
@@ -112,11 +108,6 @@ def patchFullimg(fullimg, instance, pred_box, mask):
     plecedinstance = np.array(fullimg)
     plecedinstance[starty:endy, startx:endx, :] = instance[:, :, :]
     mask2ch = np.array(mask2ch, dtype=bool)
-    # io.imsave('mask.jpg', mask, quality=100)
-    # io.imsave('maskinv.jpg', np.invert(np.array(mask, dtype=bool)), quality=100)
-    # io.imsave('test1.jpg', np.concatenate([np.multiply(plecedinstance, mask2ch), np.zeros((H, W, 1))], axis=2), quality=100)
-    # io.imsave('test2.jpg', np.concatenate([np.multiply(fullimg, np.invert(mask2ch)), np.zeros((H, W, 1))], axis=2), quality=100)
-    # io.imsave('test3.jpg', np.concatenate([fullimg, np.zeros((H, W, 1))], axis=2), quality=100)
     finalimg = np.multiply(plecedinstance, mask2ch) + np.multiply(fullimg, np.invert(mask2ch))
     return finalimg
 
@@ -132,6 +123,5 @@ def instancesMasks(fullimg_shape, outputs):
     return masks
 
 
-def save_img(save_path, imgName, img):
+def save_img(save_path, img):
     io.imsave(save_path + '.jpg', img, quality=100)
-    # io.imsave(save_path + '.' + imgName.split('.')[1], img, quality=100)
