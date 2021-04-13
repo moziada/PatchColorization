@@ -37,16 +37,12 @@ def resize_img(img, HW=(256, 256), resample=3):
     return img.resize((HW[1], HW[0]), resample=resample)
 
 
-def preprocess_img(pil_img, HW=(256, 256), resample=3):
+def preprocess(pil_img, HW=(256, 256), resample=3):
     pil_img_rs = resize_img(pil_img, HW=HW, resample=resample)
-
-    img_l_orig = pil_to_gray_np(pil_img, Channels=1)
     img_l_rs = pil_to_gray_np(pil_img_rs, Channels=1)
-
-    tens_l_img = torch.Tensor(img_l_orig)[None, None, :, :]
     tens_l_img_rs = torch.Tensor(img_l_rs)[None, None, :, :]
 
-    return tens_l_img, tens_l_img_rs
+    return (pil_img.size[1], pil_img.size[0]), tens_l_img_rs
 
 
 def parabola_fn(x):
@@ -64,7 +60,9 @@ def desaturate(pil_img, out_img):
     return color.hsv2rgb(hsv_img)
 
 
-def postprocess(np_l_img, np_ab_img, pil_img, Desaturate=True):
+def postprocess(pil_img, np_ab_img, Desaturate=True):
+    np_l_img = pil_to_gray_np(pil_img, Channels=1)
+    np_l_img = np.expand_dims(np_l_img, axis=2)
     np_lab_img = np.concatenate([np_l_img, np_ab_img], axis=2)
     np_rgb_img = color.lab2rgb(np_lab_img)
     if Desaturate:
@@ -73,8 +71,7 @@ def postprocess(np_l_img, np_ab_img, pil_img, Desaturate=True):
         return np_rgb_img
 
 
-def scaleback_ab_tens(tens_orig_l, out_ab, mode='bilinear'):
-    HW_orig = tens_orig_l.shape[2:]
+def scaleback_ab_tens(HW_orig, out_ab, mode='bilinear'):
     HW = out_ab.shape[2:]
 
     # call resize function if needed
