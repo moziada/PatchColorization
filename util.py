@@ -10,6 +10,7 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 import pickle
 import os
+import gc
 
 
 def tens2np(tens):
@@ -25,16 +26,32 @@ def read_to_pil(img_path):
 
 
 def pil_to_gray_np(img, Channels=3):
-    grey_img = color.rgb2lab(np.asarray(img))[:, :, 0]
+    lab_img = color.rgb2lab(np.asarray(img))
     if Channels == 1:
+        grey_img = lab_img[:, :, 0]
         return grey_img
     elif Channels == 3:
-        return np.stack([grey_img, grey_img, grey_img], axis=2)
+        lab_img[:, :, 1:] = 0
+        grey_img_3ch = color.lab2rgb(lab_img) * 255
+        return grey_img_3ch
 
 
 def resize_img(img, HW=(256, 256), resample=3):
     # resample=3 => BILINEAR
     return img.resize((HW[1], HW[0]), resample=resample)
+
+
+def resize_large_img(img, large_dim=1280):
+    if max(img.size) > large_dim:
+        width = img.size[0]
+        hight = img.size[1]
+        if width > hight:
+            new_resolution = (large_dim, int(large_dim * hight / width))
+        else:
+            new_resolution = (int(large_dim * width / hight), large_dim)
+        return img.resize(new_resolution, resample=3)
+    else:
+        return img
 
 
 def preprocess(pil_img, HW=(256, 256), resample=3):
@@ -86,11 +103,13 @@ def detector(img, save_path):
     if not os.path.exists(save_path):
         cfg = get_cfg()
         cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml"))
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.1
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.3
+        cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = 0.3
         cfg.MODEL.WEIGHTS = 'models/model_final_2d9806.pkl'
         # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml")
         pred = DefaultPredictor(cfg)
-        outputs = pred(img)
+        grey_img = pil_to_gray_np(img, Channels=3)
+        outputs = pred(grey_img)
         pickle.dump(outputs, open(save_path, 'wb'))
     else:
         outputs = pickle.load(open(save_path, 'rb'))
@@ -109,8 +128,8 @@ def patchFullimg(fullimg, instance, pred_box, mask):
     return finalimg
 
 
-def instancesMasks(fullimg_shape, outputs):
-    (H, W, _) = fullimg_shape
+def instancesMasks(fullimg_size, outputs):
+    (W, H) = fullimg_size
     num_instances = len(outputs["instances"])
     masks = np.zeros(shape=(num_instances, H, W))
     for i in range(num_instances):
@@ -122,3 +141,23 @@ def instancesMasks(fullimg_shape, outputs):
 
 def save_img(save_path, img):
     io.imsave(save_path + '.jpg', img, quality=100)
+
+
+def segnificat_bboexes_indices(img, bboxes, Threshold=0.002):
+    # decreasing threshold keeps more bounding boxes
+    W, H = img.size
+    return remove_small_bboxes(bboxes, H * W * Threshold)
+
+
+def remove_small_bboxes(bboxes, min_area):
+    indices = []
+    for i in range(len(bboxes)):
+        startx, starty, endx, endy = bboxes[i]
+        w = endx-startx
+        h = endy-starty
+        area = w*h
+        if area > min_area:
+            indices.append(i)
+    return indices
+
+
