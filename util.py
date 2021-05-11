@@ -4,13 +4,12 @@ import torch
 import torch.nn.functional as F
 from skimage import color
 from skimage import io
-import detectron2
+from skimage.util import img_as_ubyte
 from detectron2 import model_zoo
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 import pickle
 import os
-import gc
 
 
 def tens2np(tens):
@@ -90,7 +89,6 @@ def postprocess(pil_img, np_ab_img, Desaturate=True):
 
 def scaleback_ab_tens(HW_orig, out_ab, mode='bilinear'):
     HW = out_ab.shape[2:]
-
     # call resize function if needed
     if HW_orig[0] != HW[0] or HW_orig[1] != HW[1]:
         out_ab_orig = F.interpolate(out_ab, size=HW_orig, mode='bilinear')
@@ -102,11 +100,10 @@ def scaleback_ab_tens(HW_orig, out_ab, mode='bilinear'):
 def detector(img, save_path):
     if not os.path.exists(save_path):
         cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml"))
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"))
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.3
         cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = 0.3
-        cfg.MODEL.WEIGHTS = 'models/model_final_2d9806.pkl'
-        # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml")
+        cfg.MODEL.WEIGHTS = 'models/model_final_a3ec72.pkl'
         pred = DefaultPredictor(cfg)
         grey_img = pil_to_gray_np(img, Channels=3)
         outputs = pred(grey_img)
@@ -140,7 +137,7 @@ def instancesMasks(fullimg_size, outputs):
 
 
 def save_img(save_path, img):
-    io.imsave(save_path + '.jpg', img, quality=100)
+    io.imsave(save_path + '.jpg', img_as_ubyte(img), quality=100)
 
 
 def segnificat_bboexes_indices(img, bboxes, Threshold=0.002):
